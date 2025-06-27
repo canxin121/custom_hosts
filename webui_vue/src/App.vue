@@ -14,6 +14,8 @@ import {
   message,
   Spin,
 } from 'ant-design-vue'
+// 导入所需的图标
+import { ReloadOutlined, InfoCircleOutlined } from '@ant-design/icons-vue'
 
 const { Title, Text, Paragraph } = Typography
 const { TextArea } = Input
@@ -21,15 +23,14 @@ const { TextArea } = Input
 // 模块配置
 const MODULE_CONFIG = {
   MODULE_PATH: '/data/adb/modules/custom_hosts',
-  CUSTOM_HOSTS_FILE: 'custom_hosts.txt',
   TARGET_HOSTS_FILE: 'system/etc/hosts',
-  UPDATE_SCRIPT: 'update_hosts.sh',
+  SYSTEM_HOSTS_FILE: '/system/etc/hosts',
   TEMP_DIR: '/data/local/tmp',
 }
 
 // 响应式状态
 const state = reactive({
-  moduleStatus: 'checking',
+  moduleStatus: 'checking' as 'checking' | 'active' | 'inactive' | 'reboot_required' | 'error', // Add new status
   hostsContent: '',
   logMessages: [] as Array<{
     time: string
@@ -37,7 +38,8 @@ const state = reactive({
     type: 'info' | 'success' | 'error' | 'warning'
   }>,
   loading: false,
-  currentHosts: '',
+  systemHosts: '',
+  showConfigInfo: false, // 添加新的状态属性控制配置说明显示
 })
 
 // 构建模块路径
@@ -52,9 +54,9 @@ const addLog = (message: string, type: 'info' | 'success' | 'error' | 'warning' 
 
   // 显示toast通知
   if (type === 'success') {
-    toast(`✅ ${message}`)
+    toast(`${message}`)
   } else if (type === 'error') {
-    toast(`❌ ${message}`)
+    toast(`${message}`)
   }
 }
 
@@ -62,14 +64,44 @@ const addLog = (message: string, type: 'info' | 'success' | 'error' | 'warning' 
 const checkModuleStatus = async () => {
   try {
     addLog('检查模块状态...')
-    const result = await exec(`ls -la ${getModulePath()}/`)
+    state.moduleStatus = 'checking' // Set to checking while processing
 
-    if (result.errno === 0) {
-      state.moduleStatus = 'active'
-      addLog('模块已安装并运行正常', 'success')
-    } else {
+    // 1. Check if module directory exists
+    const moduleDirCheck = await exec(`ls -d ${getModulePath()}`)
+    if (moduleDirCheck.errno !== 0) {
       state.moduleStatus = 'inactive'
-      addLog('模块未找到或未正常运行', 'error')
+      addLog('模块目录未找到', 'error')
+      return // Module is not installed
+    }
+
+    // 2. Read module hosts file
+    const moduleHostsPath = getModulePath(MODULE_CONFIG.TARGET_HOSTS_FILE)
+    const moduleHostsResult = await exec(`cat ${moduleHostsPath}`)
+    if (moduleHostsResult.errno !== 0) {
+      // This might happen if the module is installed but the hosts file wasn't created correctly
+      state.moduleStatus = 'error'
+      addLog(`无法读取模块Hosts文件: ${moduleHostsPath}`, 'error')
+      return
+    }
+    const moduleHostsContent = moduleHostsResult.stdout.trim()
+
+    // 3. Read system hosts file
+    const systemHostsPath = MODULE_CONFIG.SYSTEM_HOSTS_FILE
+    const systemHostsResult = await exec(`cat ${systemHostsPath}`)
+    if (systemHostsResult.errno !== 0) {
+      state.moduleStatus = 'error'
+      addLog(`无法读取系统Hosts文件: ${systemHostsPath}`, 'error')
+      return
+    }
+    const systemHostsContent = systemHostsResult.stdout.trim()
+
+    // 4. Compare content
+    if (moduleHostsContent === systemHostsContent) {
+      state.moduleStatus = 'active'
+      addLog('模块Hosts配置与系统Hosts一致', 'success')
+    } else {
+      state.moduleStatus = 'reboot_required'
+      addLog('模块Hosts配置与系统Hosts不一致，需要重启生效', 'warning')
     }
   } catch (error) {
     state.moduleStatus = 'error'
@@ -77,40 +109,45 @@ const checkModuleStatus = async () => {
   }
 }
 
-// 加载并查看hosts配置
-const loadAndViewHosts = async () => {
+// 加载模块hosts配置（用于编辑）
+const loadModuleHosts = async () => {
   if (state.loading) return
 
   state.loading = true
   try {
-    addLog('加载Hosts配置...')
-    const result = await exec(`cat ${getModulePath(MODULE_CONFIG.CUSTOM_HOSTS_FILE)}`)
+    addLog('加载模块Hosts配置...')
+    const result = await exec(`cat ${getModulePath(MODULE_CONFIG.TARGET_HOSTS_FILE)}`)
 
     if (result.errno === 0) {
       state.hostsContent = result.stdout
-      addLog('Hosts配置已加载', 'success')
+      addLog('模块Hosts配置已加载', 'success')
     } else {
-      addLog('加载Hosts配置失败，尝试加载系统默认hosts', 'warning')
-      // 如果自定义配置不存在，尝试加载系统hosts文件
-      const systemResult = await exec(
-        `cat ${getModulePath(MODULE_CONFIG.TARGET_HOSTS_FILE)} 2>/dev/null || cat /system/etc/hosts`,
-      )
+      addLog('模块Hosts配置不存在，创建默认配置', 'warning')
+      // 如果模块配置不存在，从系统hosts创建一个默认配置
+      const systemResult = await exec(`cat ${MODULE_CONFIG.SYSTEM_HOSTS_FILE}`)
       if (systemResult.errno === 0) {
-        state.hostsContent = systemResult.stdout
-        addLog('已加载系统默认hosts文件', 'success')
-      } else {
-        addLog('无法加载任何hosts文件', 'error')
-      }
-    }
+        state.hostsContent = `# Custom hosts file - managed by KernelSU Custom Hosts module
+# Add your custom host entries below:
+# Format: IP_ADDRESS    DOMAIN_NAME
 
-    // 同时获取当前生效的hosts文件用于预览
-    addLog('获取当前生效的Hosts文件...')
-    const currentResult = await exec(
-      `cat ${getModulePath(MODULE_CONFIG.TARGET_HOSTS_FILE)} 2>/dev/null || cat /system/etc/hosts`,
-    )
-    if (currentResult.errno === 0) {
-      state.currentHosts = currentResult.stdout
-      addLog('已获取当前生效的Hosts文件', 'success')
+# Your custom entries go here:
+
+
+# ====================================================================
+# Original system hosts content below:
+# ====================================================================
+
+${systemResult.stdout}`
+        addLog('已基于系统hosts创建默认配置', 'success')
+      } else {
+        state.hostsContent = `# Custom hosts file - managed by KernelSU Custom Hosts module
+# Add your custom host entries below:
+# Format: IP_ADDRESS    DOMAIN_NAME
+
+127.0.0.1       localhost
+::1             localhost`
+        addLog('已创建基础默认配置', 'success')
+      }
     }
   } catch (error) {
     addLog(`加载配置异常: ${error}`, 'error')
@@ -119,8 +156,25 @@ const loadAndViewHosts = async () => {
   }
 }
 
-// 保存并更新hosts配置
-const saveAndUpdateHosts = async () => {
+// 加载系统当前hosts（用于预览）
+const loadSystemHosts = async () => {
+  try {
+    addLog('获取系统当前Hosts文件...')
+    const result = await exec(`cat ${MODULE_CONFIG.SYSTEM_HOSTS_FILE}`)
+
+    if (result.errno === 0) {
+      state.systemHosts = result.stdout
+      addLog('已获取系统当前Hosts文件', 'success')
+    } else {
+      addLog('无法读取系统Hosts文件', 'error')
+    }
+  } catch (error) {
+    addLog(`读取系统Hosts异常: ${error}`, 'error')
+  }
+}
+
+// 保存hosts配置
+const saveHosts = async () => {
   if (state.loading) return
   if (!state.hostsContent.trim()) {
     message.warning('配置内容不能为空')
@@ -130,26 +184,26 @@ const saveAndUpdateHosts = async () => {
   state.loading = true
   try {
     addLog('保存Hosts配置...')
-    const tempFile = `${MODULE_CONFIG.TEMP_DIR}/custom_hosts_temp.txt`
+
+    // 确保目标目录存在
+    await exec(`mkdir -p ${getModulePath('system/etc')}`)
+
+    const tempFile = `${MODULE_CONFIG.TEMP_DIR}/hosts_temp.txt`
     const escapedContent = state.hostsContent.replace(/'/g, "'\\''")
 
-    // 先保存配置文件
+    // 保存到模块的hosts文件
     const saveResult = await exec(
-      `echo '${escapedContent}' > ${tempFile} && mv ${tempFile} ${getModulePath(MODULE_CONFIG.CUSTOM_HOSTS_FILE)}`,
+      `echo '${escapedContent}' > ${tempFile} && mv ${tempFile} ${getModulePath(MODULE_CONFIG.TARGET_HOSTS_FILE)}`,
     )
 
     if (saveResult.errno === 0) {
       addLog('Hosts配置已保存', 'success')
+      addLog('配置将在重启后生效', 'info')
 
-      // 然后更新系统hosts文件
-      addLog('更新系统Hosts文件...')
-      const updateResult = await exec(`sh ${getModulePath(MODULE_CONFIG.UPDATE_SCRIPT)}`)
-
-      if (updateResult.errno === 0) {
-        addLog('Hosts文件更新完成，重启后生效', 'success')
-      } else {
-        addLog('更新Hosts文件失败，但配置已保存', 'warning')
-      }
+      // 刷新系统hosts预览
+      await loadSystemHosts()
+      // 保存成功后刷新模块状态
+      await checkModuleStatus() // Add this line
     } else {
       addLog('保存配置失败', 'error')
     }
@@ -160,13 +214,18 @@ const saveAndUpdateHosts = async () => {
   }
 }
 
+// 切换配置说明的显示状态
+const toggleConfigInfo = () => {
+  state.showConfigInfo = !state.showConfigInfo
+}
+
 // 组件挂载时初始化
 onMounted(async () => {
   addLog('Custom Hosts WebUI 已加载', 'success')
   await checkModuleStatus()
-  if (state.moduleStatus === 'active') {
-    await loadAndViewHosts()
-  }
+  // 无论模块状态如何，都尝试加载配置和系统hosts
+  await loadModuleHosts() // Unconditionally load module hosts
+  await loadSystemHosts() // Unconditionally load system hosts
 })
 </script>
 
@@ -174,7 +233,7 @@ onMounted(async () => {
   <div style="padding: 24px; min-height: 100vh; background-color: #f5f5f5">
     <!-- 标题区域 -->
     <div style="text-align: center; margin-bottom: 32px">
-      <Title :level="1">🌐 Custom Hosts</Title>
+      <Title :level="1">Custom Hosts</Title>
       <Text type="secondary">KernelSU 自定义 Hosts 管理器</Text>
     </div>
 
@@ -182,23 +241,47 @@ onMounted(async () => {
       <!-- 左侧主要操作区域 -->
       <Col :xs="24" :lg="16">
         <!-- 模块状态 -->
-        <Card title="📊 模块状态" style="margin-bottom: 16px">
-          <Space>
-            <Tag v-if="state.moduleStatus === 'active'" color="success">✅ 模块运行正常</Tag>
-            <Tag v-else-if="state.moduleStatus === 'inactive'" color="error">❌ 模块未运行</Tag>
-            <Tag v-else-if="state.moduleStatus === 'error'" color="error">❌ 模块错误</Tag>
-            <Tag v-else color="processing">🔄 检查中...</Tag>
-
-            <Button @click="checkModuleStatus" :loading="state.loading"> 刷新状态 </Button>
-          </Space>
+        <Card title="模块状态" style="margin-bottom: 16px">
+          <template #extra>
+            <!-- 刷新状态图标按钮 -->
+            <Button type="link" @click="checkModuleStatus" :loading="state.loading">
+              <template #icon><ReloadOutlined /></template>
+            </Button>
+          </template>
+          <div style="text-align: center">
+            <Space :size="16">
+              <Tag v-if="state.moduleStatus === 'active'" color="success">模块运行正常</Tag>
+              <Tag v-else-if="state.moduleStatus === 'inactive'" color="error">模块已被删除</Tag>
+              <Tag v-else-if="state.moduleStatus === 'error'" color="error">模块运行出错</Tag>
+              <Tag v-else-if="state.moduleStatus === 'reboot_required'" color="warning"
+                >需要重启生效</Tag
+              >
+              <Tag v-else color="processing">检查中...</Tag>
+            </Space>
+          </div>
         </Card>
 
         <!-- Hosts编辑器 -->
-        <Card title="✏️ Hosts 配置管理">
+        <Card title="模块 Hosts内容">
+          <!-- 在 Card 的 extra slot 添加按钮 -->
+          <template #extra>
+            <Space>
+              <!-- 加载配置图标按钮 -->
+              <Button type="link" @click.prevent="loadModuleHosts" :loading="state.loading">
+                <template #icon><ReloadOutlined /></template>
+              </Button>
+              <!-- 显示说明图标按钮 -->
+              <Button type="link" @click="toggleConfigInfo">
+                <template #icon><InfoCircleOutlined /></template>
+              </Button>
+            </Space>
+          </template>
 
+          <!-- 根据 showConfigInfo 状态条件渲染 Alert -->
           <Alert
+            v-if="state.showConfigInfo"
             message="配置说明"
-            description="在下面的文本框中编辑您的自定义 hosts 条目。格式：IP地址 域名"
+            description="直接编辑模块的 hosts 文件内容。保存后需要重启设备才能生效。"
             type="info"
             show-icon
             style="margin-bottom: 16px"
@@ -207,39 +290,53 @@ onMounted(async () => {
           <TextArea
             v-model:value="state.hostsContent"
             :rows="12"
-            placeholder="# 添加您的自定义 hosts 条目
-# 格式示例：
-# 127.0.0.1       example.com
-# 192.168.1.100   local.server
-# 0.0.0.0         ads.example.com"
-            style="font-family: 'Courier New', monospace"
+            placeholder="# 模块 hosts 配置文件\n# 格式示例：\n# 127.0.0.1       example.com\n# 192.168.1.100   local.server\n# 0.0.0.0         ads.example.com"
+            style="
+              font-family:
+                'SFMono-Regular', 'Consolas', 'Liberation Mono', 'Menlo', 'Monaco', monospace;
+              font-size: 13px;
+              line-height: 1.4;
+              letter-spacing: 0;
+            "
           />
 
-            <div style="margin-top: 16px; display: flex; justify-content: flex-end;">
+          <div style="margin-top: 16px; display: flex; justify-content: flex-end">
             <Space wrap>
-              <Button @click="loadAndViewHosts" :loading="state.loading"> 📂 加载配置 </Button>
-              <Button type="primary" @click="saveAndUpdateHosts" :loading="state.loading">
-              🚀 保存并应用
+              <!-- 保存配置按钮不变 -->
+              <Button type="primary" @click.prevent="saveHosts" :loading="state.loading">
+                保存并应用配置
               </Button>
             </Space>
-            </div>
+          </div>
         </Card>
       </Col>
 
       <!-- 右侧日志区域 -->
       <Col :xs="24" :lg="8">
-        <!-- 当前Hosts预览 -->
-        <Card v-if="state.currentHosts" title="📄 当前 Hosts 内容" style="margin-bottom: 16px">
+        <!-- 系统Hosts预览 -->
+        <Card title="系统 Hosts内容" style="margin-bottom: 16px">
+          <template #extra>
+            <!-- 刷新系统Hosts图标按钮 -->
+            <Button size="small" type="link" @click="loadSystemHosts" :loading="state.loading">
+              <template #icon><ReloadOutlined /></template>
+            </Button>
+          </template>
           <TextArea
-            :value="state.currentHosts"
+            :value="state.systemHosts"
             :rows="8"
             readonly
-            style="font-family: 'Courier New', monospace; font-size: 12px"
+            style="
+              font-family:
+                'SFMono-Regular', 'Consolas', 'Liberation Mono', 'Menlo', 'Monaco', monospace;
+              font-size: 12px;
+              line-height: 1.4;
+              letter-spacing: 0;
+            "
           />
         </Card>
 
         <!-- 操作日志 -->
-        <Card title="📝 操作日志">
+        <Card title="操作日志">
           <div style="max-height: 300px; overflow-y: auto">
             <div
               v-for="(log, index) in state.logMessages"
@@ -262,7 +359,13 @@ onMounted(async () => {
                           ? 'warning'
                           : undefined
                   "
-                  style="font-size: 12px; font-family: 'Courier New', monospace"
+                  style="
+                    font-size: 12px;
+                    font-family:
+                      'SFMono-Regular', 'Consolas', 'Liberation Mono', 'Menlo', 'Monaco', monospace;
+                    line-height: 1.4;
+                    letter-spacing: 0;
+                  "
                 >
                   {{ log.message }}
                 </Text>
@@ -296,7 +399,7 @@ onMounted(async () => {
     >
       <Spin size="large">
         <template #indicator>
-          <div style="font-size: 24px">⚡</div>
+          <div></div>
         </template>
       </Spin>
     </div>
@@ -304,5 +407,30 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-/* 移除多余的CSS，使用Ant Design Vue的样式 */
+/* 优化等宽字体显示 */
+.ant-input {
+  font-variant-ligatures: none; /* 禁用连字符，确保等宽字体正确显示 */
+}
+
+/* 自定义等宽字体类 */
+.monospace-text {
+  font-family:
+    'SFMono-Regular', 'Consolas', 'Liberation Mono', 'Menlo', 'Monaco', 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.4;
+  letter-spacing: 0;
+  font-weight: normal;
+  font-variant-ligatures: none;
+}
+
+/* 小号等宽字体 */
+.monospace-small {
+  font-family:
+    'SFMono-Regular', 'Consolas', 'Liberation Mono', 'Menlo', 'Monaco', 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  letter-spacing: 0;
+  font-weight: normal;
+  font-variant-ligatures: none;
+}
 </style>
