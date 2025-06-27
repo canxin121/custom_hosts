@@ -1,0 +1,29 @@
+# Custom hosts file - managed by KernelSU Custom Hosts module
+# This file will be automatically merged with system hosts during installation
+#
+# Add your custom host entries below:
+# Format: IP_ADDRESS    DOMAIN_NAME
+#
+# Examples:
+# 127.0.0.1       example.com
+# 192.168.1.100   local.server
+# 0.0.0.0         ads.example.com    # Block ads
+#
+# The system's original hosts content will be preserved and appended below
+# ====================================================================
+
+# Your custom entries go here:
+# 屏蔽广告域名示例（取消注释以启用）
+# 0.0.0.0         googleads.g.doubleclick.net
+# 0.0.0.0         googlesyndication.com
+# 0.0.0.0         www.googleadservices.com
+
+# 本地服务器映射示例（取消注释以启用）
+# 192.168.1.100   homeserver.local
+# 192.168.1.200   nas.local
+# 10.0.0.1        router.local
+
+# 开发环境映射示例（取消注释以启用）  
+# 127.0.0.1       dev.myapp.com
+# 127.0.0.1       test.api.com
+# 192.168.1.50    staging.myapp.com

@@ -1,0 +1,80 @@
+name: Build Custom Hosts Module
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "latest"
+
+      - name: Set up build environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zip
+
+      - name: Build Vue WebUI
+        run: |
+          cd webui_vue
+          npm install
+          npm run build
+
+      - name: Prepare webroot
+        run: |
+          # 创建 webroot 目录
+          mkdir -p webroot
+          # 复制构建后的文件到 webroot
+          cp -r webui_vue/dist/* webroot/
+
+      - name: Build module
+        run: |
+          # 创建构建目录
+          mkdir -p build/custom_hosts
+
+          # 复制必要的文件
+          cp -r module.prop build/custom_hosts/
+          cp -r system build/custom_hosts/ 2>/dev/null || true
+          cp -r webroot build/custom_hosts/ 2>/dev/null || true
+          cp -r service.sh build/custom_hosts/ 2>/dev/null || true
+          cp -r post-mount-data.sh build/custom_hosts/ 2>/dev/null || true
+          cp -r uninstall.sh build/custom_hosts/ 2>/dev/null || true
+          cp -r update_hosts.sh build/custom_hosts/ 2>/dev/null || true
+          cp -r customize.sh build/custom_hosts/ 2>/dev/null || true
+          cp -r post-mount.sh build/custom_hosts/ 2>/dev/null || true
+
+
+          # 设置正确的权限
+          find build/custom_hosts -type f -name "*.sh" -exec chmod +x {} \;
+
+      - name: Create module package
+        run: |
+          cd build/custom_hosts
+          zip -r ../custom_hosts_module.zip .
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: custom_hosts_module
+          path: build/custom_hosts/*
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/custom_hosts_module.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
