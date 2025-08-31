@@ -5,6 +5,10 @@
 
 MODDIR=${0%/*}
 
+# Paths
+SYSTEM_HOSTS="/system/etc/hosts"
+CUSTOM_HOSTS="$MODDIR/custom_hosts.txt"
+
 # Log function
 log_info() {
     echo "[Custom Hosts] $1" | tee -a /cache/custom_hosts.log
@@ -14,6 +18,41 @@ log_info "Post-mount script started"
 
 # Ensure target hosts file exists and has correct permissions
 TARGET_HOSTS="$MODDIR/system/etc/hosts"
+
+if [ ! -f "$TARGET_HOSTS" ]; then
+    # Create initial hosts so that Web UI can read it before first save
+    log_info "Creating initial hosts at $TARGET_HOSTS"
+    mkdir -p "$MODDIR/system/etc"
+
+    # Build initial merged hosts: custom (filtered) + separator + system/default
+    {
+        cat << 'EOF'
+# Custom hosts file - managed by KernelSU Custom Hosts module
+# This file contains both system hosts and custom entries
+# ====================================================================
+
+EOF
+        if [ -f "$CUSTOM_HOSTS" ]; then
+            # add non-comment, non-empty custom entries
+            grep -v '^#' "$CUSTOM_HOSTS" | grep -v '^[[:space:]]*$'
+            echo ""
+        fi
+        cat << 'EOF'
+# ====================================================================
+# Original system hosts content below:
+# ====================================================================
+
+EOF
+        if [ -f "$SYSTEM_HOSTS" ]; then
+            cat "$SYSTEM_HOSTS"
+        else
+            cat << 'EOF'
+127.0.0.1       localhost
+::1             localhost
+EOF
+        fi
+    } > "$TARGET_HOSTS"
+fi
 
 if [ -f "$TARGET_HOSTS" ]; then
     # Set correct owner/permissions and SELinux context for hosts file
@@ -31,7 +70,6 @@ else
 fi
 
 # Ensure custom_hosts.txt exists
-CUSTOM_HOSTS="$MODDIR/custom_hosts.txt"
 if [ ! -f "$CUSTOM_HOSTS" ]; then
     log_info "Creating default custom_hosts.txt"
     cat > "$CUSTOM_HOSTS" << 'EOF'

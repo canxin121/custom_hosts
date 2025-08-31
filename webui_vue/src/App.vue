@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, onMounted, reactive } from 'vue'
-import { exec, spawn, toast } from 'kernelsu'
+import { onMounted, reactive } from 'vue'
+import { exec, toast } from 'kernelsu'
 import {
   Card,
   Button,
@@ -17,7 +17,7 @@ import {
 // 导入所需的图标
 import { ReloadOutlined, InfoCircleOutlined } from '@ant-design/icons-vue'
 
-const { Title, Text, Paragraph } = Typography
+const { Title, Text } = Typography
 const { TextArea } = Input
 
 // 模块配置
