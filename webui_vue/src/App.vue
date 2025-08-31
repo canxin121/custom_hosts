@@ -198,12 +198,31 @@ const saveHosts = async () => {
 
     if (saveResult.errno === 0) {
       addLog('Hosts配置已保存', 'success')
-      addLog('配置将在重启后生效', 'info')
+
+      // 尝试立即通过绑定挂载应用更改
+      const moduleHosts = getModulePath(MODULE_CONFIG.TARGET_HOSTS_FILE)
+      const systemHosts = MODULE_CONFIG.SYSTEM_HOSTS_FILE
+      addLog('尝试立即应用（bind mount）...', 'info')
+
+      // 先修正源文件权限与 SELinux 上下文，再尝试多种 mount 实现
+      const mountCmd = `
+chown 0:0 '${moduleHosts}' 2>/dev/null || true
+chmod 0644 '${moduleHosts}' 2>/dev/null || true
+chcon u:object_r:system_file:s0 '${moduleHosts}' 2>/dev/null || true
+if mount | grep -q ' /system/etc/hosts '; then umount '/system/etc/hosts' 2>/dev/null || true; fi
+mount -o bind '${moduleHosts}' '${systemHosts}' 2>/dev/null || toybox mount -o bind '${moduleHosts}' '${systemHosts}' 2>/dev/null || busybox mount -o bind '${moduleHosts}' '${systemHosts}'
+`
+      const m = await exec(mountCmd)
+      if (m.errno === 0) {
+        addLog('已通过绑定挂载立即应用', 'success')
+      } else {
+        addLog('无法立即应用，更改将在重启后生效', 'warning')
+      }
 
       // 刷新系统hosts预览
       await loadSystemHosts()
       // 保存成功后刷新模块状态
-      await checkModuleStatus() // Add this line
+      await checkModuleStatus()
     } else {
       addLog('保存配置失败', 'error')
     }
