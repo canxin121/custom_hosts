@@ -68,6 +68,14 @@ EOF
 fi
 
 echo "Hosts file updated successfully!"
+echo "Fixing owner/permissions and SELinux context..."
+chown 0:0 "$TARGET_HOSTS" 2>/dev/null || true
+chmod 0644 "$TARGET_HOSTS" 2>/dev/null || true
+if command -v set_perm >/dev/null 2>&1; then
+    set_perm "$TARGET_HOSTS" 0 0 0644 u:object_r:system_file:s0
+else
+    chcon u:object_r:system_file:s0 "$TARGET_HOSTS" 2>/dev/null || true
+fi
 echo "Changes will take effect after reboot or module restart."
 echo ""
 echo "To apply changes immediately (requires root):"

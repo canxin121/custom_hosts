@@ -16,10 +16,16 @@ log_info "Post-mount script started"
 TARGET_HOSTS="$MODDIR/system/etc/hosts"
 
 if [ -f "$TARGET_HOSTS" ]; then
-    # Set correct permissions for hosts file
-    chmod 644 "$TARGET_HOSTS"
-    chown root:root "$TARGET_HOSTS" 2>/dev/null || true
-    log_info "Set permissions for hosts file"
+    # Set correct owner/permissions and SELinux context for hosts file
+    chown 0:0 "$TARGET_HOSTS" 2>/dev/null || true
+    chmod 0644 "$TARGET_HOSTS" 2>/dev/null || true
+    # Prefer set_perm if available (KernelSU/Magisk environment)
+    if command -v set_perm >/dev/null 2>&1; then
+        set_perm "$TARGET_HOSTS" 0 0 0644 u:object_r:system_file:s0
+    else
+        chcon u:object_r:system_file:s0 "$TARGET_HOSTS" 2>/dev/null || true
+    fi
+    log_info "Ensured hosts owner/mode/SELinux context"
 else
     log_info "Warning: Target hosts file not found at $TARGET_HOSTS"
 fi

@@ -70,6 +70,23 @@ if [ -f "$MODDIR/action.sh" ]; then
     ui_print "- Action button enabled"
 fi
 
+# Ensure the generated hosts has correct owner/mode/SELinux context
+ui_print "- Setting permissions and SELinux context for hosts..."
+# Prefer installer-provided helpers (KernelSU/Magisk) to set secontext properly on bind mount sources
+if command -v set_perm >/dev/null 2>&1; then
+    # context must be system_file so that mounted /system/etc/hosts gets u:object_r:system_file:s0
+    set_perm "$TARGET_HOSTS" 0 0 0644 u:object_r:system_file:s0
+    # also set directory tree sane perms (dir 0755 / files 0644)
+    if command -v set_perm_recursive >/dev/null 2>&1; then
+        set_perm_recursive "$MODDIR/system" 0 0 0755 0644 u:object_r:system_file:s0
+    fi
+else
+    # Fallback: best-effort using toolbox/toybox
+    chown 0:0 "$TARGET_HOSTS" 2>/dev/null || true
+    chmod 0644 "$TARGET_HOSTS" 2>/dev/null || true
+    chcon u:object_r:system_file:s0 "$TARGET_HOSTS" 2>/dev/null || true
+fi
+
 # Ensure webroot directory has proper permissions for KernelSU WebUI
 if [ -d "$MODDIR/webroot" ]; then
     ui_print "- Setting webroot permissions..."

@@ -23,6 +23,20 @@ if [ -f "/system/etc/hosts" ]; then
     else
         log_info "Warning: Custom hosts file may not be active"
     fi
+
+    # Ensure the bind/overlay source has proper context so the mounted view is correct
+    SRC_HOSTS="$MODDIR/system/etc/hosts"
+    if [ -f "$SRC_HOSTS" ]; then
+        # Fix perms/context on source file
+        chown 0:0 "$SRC_HOSTS" 2>/dev/null || true
+        chmod 0644 "$SRC_HOSTS" 2>/dev/null || true
+        if command -v set_perm >/dev/null 2>&1; then
+            set_perm "$SRC_HOSTS" 0 0 0644 u:object_r:system_file:s0
+        else
+            chcon u:object_r:system_file:s0 "$SRC_HOSTS" 2>/dev/null || true
+        fi
+        log_info "Verified source hosts perms/SELinux context"
+    fi
 else
     log_info "Error: Hosts file not found"
 fi
